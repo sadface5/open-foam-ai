@@ -16,6 +16,10 @@ It runs **locally** and uses the **Anthropic Claude API** for reasoning.
 > **Status:** working application, first public release. It is a decision-support
 > tool: it **suggests** changes and never runs OpenFOAM itself.
 
+> 📝 **Using the assistant?** Please take the 3–5 minute
+> [Beta Feedback Survey](https://formhug.ai/f/jHKu9K) — it directly shapes what gets
+> built next (see [ROADMAP.md](ROADMAP.md)).
+
 ---
 
 ## Table of contents
