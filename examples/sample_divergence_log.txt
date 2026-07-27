@@ -1,0 +1,32 @@
+// Example solver output showing a diverging run.
+// Paste text like this into the app (or use it to try the Solver Divergence Debugger).
+
+Starting time loop
+
+Time = 0.0100
+
+Courant Number mean: 0.82 max: 3.5
+smoothSolver:  Solving for Ux, Initial residual = 0.041, Final residual = 8.7e-07, No Iterations 4
+smoothSolver:  Solving for Uy, Initial residual = 0.052, Final residual = 9.1e-07, No Iterations 5
+GAMG:  Solving for p, Initial residual = 0.31, Final residual = 4.9e-07, No Iterations 12
+time step continuity errors : sum local = 3.1e-05, global = -2.2e-19, cumulative = -2.2e-19
+
+Time = 0.0110
+
+Courant Number mean: 2.9 max: 48.2
+smoothSolver:  Solving for Ux, Initial residual = 0.18, Final residual = 3.3e-06, No Iterations 8
+smoothSolver:  Solving for Uy, Initial residual = 0.22, Final residual = 4.1e-06, No Iterations 9
+GAMG:  Solving for p, Initial residual = 0.74, Final residual = 6.5e+03, No Iterations 1000
+bounding k, min: -2.1e+04 max: 5.6e+06 average: 3.2e+03
+
+Time = 0.0120
+
+Courant Number mean: 12.4 max: 340.8
+GAMG:  Solving for p, Initial residual = 0.99, Final residual = 4.2e+12, No Iterations 1000
+bounding k, min: -3.4e+05 max: 8.9e+08 average: 1.2e+06
+
+#0  Foam::error::printStack(Foam::Ostream&) at ??:?
+#1  Foam::sigFpe::sigHandler(int) at ??:?
+#2  ? in /lib/x86_64-linux-gnu/libc.so.6
+
+--> FOAM FATAL ERROR: Floating point exception

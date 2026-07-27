@@ -1,0 +1,154 @@
+# Structured 10-step procedure for the Numerical Settings Optimizer skill.
+id: numerical_settings_optimizer
+name: "Numerical Settings Optimizer"
+purpose: "Check whether fvSchemes, fvSolution, and control settings form a stable and internally consistent numerical configuration."
+description: "Tune fvSchemes / fvSolution for stability and convergence."
+relevant_files:
+  - "system/fvSchemes"
+  - "system/fvSolution"
+  - "system/controlDict"
+  - "solver log"
+  - "constant/turbulenceProperties"
+  - "uploaded checkMesh / mesh-quality report"
+  - "0/ initial fields"
+
+steps:
+  - number: 1
+    title: "Identify the numerical problem type"
+    purpose: "Frame every later judgment."
+    required_files: ["system/controlDict"]
+    optional_files: ["constant/turbulenceProperties"]
+    checks:
+      - "Determine steady vs transient, compressible vs incompressible, single vs multiphase, laminar vs turbulent, weak vs strong coupling"
+    evidence_to_extract: ["application", "simulationType"]
+    severity_rules: "Type mismatch drives many later Critical findings."
+    confidence_rules: "Confirmed where the files state it; otherwise Likely/Unknown."
+    missing_information_behavior: "If controlDict is missing, request it."
+    allowed_recommendation_categories: []
+
+  - number: 2
+    title: "Confirm required scheme sections exist"
+    purpose: "Catch missing fvSchemes sections."
+    required_files: ["system/fvSchemes"]
+    optional_files: []
+    checks:
+      - "Check ddtSchemes, gradSchemes, divSchemes, laplacianSchemes, interpolationSchemes, snGradSchemes, wallDist if relevant"
+    evidence_to_extract: ["present scheme sections"]
+    severity_rules: "A missing required section is Critical."
+    confidence_rules: "Confirmed from fvSchemes."
+    missing_information_behavior: "If fvSchemes is missing, request it."
+    allowed_recommendation_categories: ["schemes"]
+
+  - number: 3
+    title: "Evaluate temporal discretization"
+    purpose: "Match the ddt scheme to intent."
+    required_files: ["system/fvSchemes"]
+    optional_files: ["system/controlDict"]
+    checks:
+      - "Check the time scheme vs steady/transient, startup stability, requested accuracy, moving mesh, multiphase"
+      - "Consider the scheme alongside deltaT and any Courant evidence"
+    evidence_to_extract: ["ddtScheme", "deltaT"]
+    severity_rules: "Transient ddt with a steady solver (or vice versa) is Critical."
+    confidence_rules: "Confirmed from fvSchemes + controlDict."
+    missing_information_behavior: "Courant number Unknown unless logged."
+    allowed_recommendation_categories: ["schemes", "time_step"]
+
+  - number: 4
+    title: "Evaluate convection schemes"
+    purpose: "Balance stability and accuracy in divSchemes."
+    required_files: ["system/fvSchemes"]
+    optional_files: []
+    checks:
+      - "Classify each divergence scheme as robust/diffusive, bounded/limited, higher-order, or aggressive"
+      - "Flag schemes unsuitable for startup or inconsistent across related fields"
+    evidence_to_extract: ["divSchemes entries"]
+    severity_rules: "Unbounded high-order convection on startup is a Warning."
+    confidence_rules: "Confirmed from fvSchemes."
+    missing_information_behavior: "n/a"
+    allowed_recommendation_categories: ["schemes"]
+
+  - number: 5
+    title: "Evaluate gradients and limiting"
+    purpose: "Protect gradients on poor meshes."
+    required_files: ["system/fvSchemes"]
+    optional_files: ["uploaded checkMesh report"]
+    checks:
+      - "Inspect gradient schemes, limiters, near-poor-cell treatment"
+      - "Flag unrestricted gradients on poor meshes or excessive limiting that hurts accuracy"
+    evidence_to_extract: ["gradSchemes entries"]
+    severity_rules: "Unlimited gradients on a known-poor mesh is a Warning."
+    confidence_rules: "Confirmed from fvSchemes; mesh quality only if reported."
+    missing_information_behavior: "Mesh quality Unknown without checkMesh."
+    allowed_recommendation_categories: ["schemes"]
+
+  - number: 6
+    title: "Evaluate Laplacian and non-orthogonal treatment"
+    purpose: "Match diffusion terms to mesh quality."
+    required_files: ["system/fvSchemes"]
+    optional_files: ["system/fvSolution", "uploaded checkMesh report"]
+    checks:
+      - "Compare laplacianSchemes, snGradSchemes, and nNonOrthogonalCorrectors to mesh-quality evidence"
+      - "Flag configurations inconsistent with the mesh quality"
+    evidence_to_extract: ["laplacianSchemes", "snGradSchemes", "nNonOrthogonalCorrectors"]
+    severity_rules: "Uncorrected non-orthogonality on a skewed mesh is a Warning."
+    confidence_rules: "Confirmed from fvSchemes/fvSolution."
+    missing_information_behavior: "Actual non-orthogonality Unknown without checkMesh."
+    allowed_recommendation_categories: ["schemes", "linear_solver"]
+
+  - number: 7
+    title: "Validate linear solver settings"
+    purpose: "Ensure each field is solved correctly."
+    required_files: ["system/fvSolution"]
+    optional_files: []
+    checks:
+      - "For each required field check solver type, preconditioner/smoother, tolerance, relTol, and unused/missing entries"
+    evidence_to_extract: ["solver entries", "tolerances"]
+    severity_rules: "Missing solver entry for a solved field is Critical."
+    confidence_rules: "Confirmed from fvSolution."
+    missing_information_behavior: "If fvSolution is missing, request it."
+    allowed_recommendation_categories: ["linear_solver"]
+
+  - number: 8
+    title: "Review pressure-velocity coupling"
+    purpose: "Check the outer algorithm."
+    required_files: ["system/fvSolution"]
+    optional_files: []
+    checks:
+      - "Inspect nCorrectors, nOuterCorrectors, nNonOrthogonalCorrectors, momentumPredictor, residualControl, algorithm choice"
+    evidence_to_extract: ["SIMPLE/PIMPLE/PISO block contents"]
+    severity_rules: "Missing corrector settings for the chosen algorithm is a Warning."
+    confidence_rules: "Confirmed from fvSolution."
+    missing_information_behavior: "n/a"
+    allowed_recommendation_categories: ["linear_solver"]
+
+  - number: 9
+    title: "Review relaxation and convergence controls"
+    purpose: "Tune stability vs speed."
+    required_files: ["system/fvSolution"]
+    optional_files: []
+    checks:
+      - "Check field/equation relaxation, values outside valid ranges, overly aggressive/conservative values"
+      - "Check residualControl completeness and stopping criteria"
+    evidence_to_extract: ["relaxationFactors", "residualControl"]
+    severity_rules: "Relaxation factor outside (0,1] is Critical; weak criteria are Informational."
+    confidence_rules: "Confirmed from fvSolution."
+    missing_information_behavior: "n/a"
+    allowed_recommendation_categories: ["relaxation"]
+
+  - number: 10
+    title: "Recommend staged numerical configurations"
+    purpose: "Offer stabilize / balanced / higher-accuracy modes."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Provide a stabilization mode, a balanced mode, and a higher-accuracy mode"
+      - "For each: exact changes, expected benefit, accuracy tradeoff, when to use, what to monitor after running"
+    evidence_to_extract: []
+    severity_rules: "Recommend one staged change set at a time."
+    confidence_rules: "Carry each finding's label."
+    missing_information_behavior: "Prefer requesting the log over guessing runtime behavior."
+    allowed_recommendation_categories: ["schemes", "linear_solver", "relaxation", "time_step"]
+
+post_checklist_reasoning: >
+  After the 10 steps, use broader reasoning to identify unusual numerical
+  interactions, solver-specific settings, or known issues from retrieved cases.

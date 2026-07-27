@@ -1,0 +1,164 @@
+# Structured 10-step procedure for the Mesh Doctor skill.
+id: mesh_doctor
+name: "Mesh Doctor"
+purpose: "Evaluate mesh-generation settings, mesh structure, geometry references, and any available mesh-quality evidence."
+description: "checkMesh warnings, bad cells, or instability that looks mesh-related."
+relevant_files:
+  - "system/blockMeshDict"
+  - "system/snappyHexMeshDict"
+  - "system/surfaceFeatureExtractDict"
+  - "system/meshQualityDict"
+  - "constant/triSurface geometry files"
+  - "constant/polyMesh/boundary"
+  - "constant/polyMesh/points, faces, owner, neighbour (presence only)"
+  - "uploaded checkMesh report"
+
+steps:
+  - number: 1
+    title: "Identify the mesh-generation method"
+    purpose: "Only apply advice relevant to the detected method."
+    required_files: []
+    optional_files: ["system/blockMeshDict", "system/snappyHexMeshDict"]
+    checks:
+      - "Detect blockMesh, snappyHexMesh, imported mesh, another generator, or a combined workflow"
+    evidence_to_extract: ["which mesh dictionaries are present"]
+    severity_rules: "Method detection is context, not a defect by itself."
+    confidence_rules: "Confirmed if the dictionary exists; otherwise inferred (Possible)."
+    missing_information_behavior: "If no mesh dicts and no polyMesh, ask how the mesh was made."
+    allowed_recommendation_categories: []
+
+  - number: 2
+    title: "Confirm referenced geometry exists"
+    purpose: "Catch broken geometry references early."
+    required_files: []
+    optional_files: ["system/snappyHexMeshDict", "constant/triSurface"]
+    checks:
+      - "Check file paths, filenames, capitalization, STL/surface names, region names"
+      - "Flag missing geometry, duplicate names, and scale assumptions"
+    evidence_to_extract: ["geometry filenames referenced", "which exist on disk"]
+    severity_rules: "A referenced surface that is missing on disk is Critical."
+    confidence_rules: "Confirmed by comparing references to the constant/triSurface folder."
+    missing_information_behavior: "If triSurface folder is unavailable, mark geometry existence Unknown."
+    allowed_recommendation_categories: ["geometry"]
+
+  - number: 3
+    title: "Inspect the background domain"
+    purpose: "Find domain/blocking problems (blockMesh)."
+    required_files: []
+    optional_files: ["system/blockMeshDict"]
+    checks:
+      - "Inspect vertices, blocks, dimensions, cell counts, grading, patch faces"
+      - "Flag duplicate/reversed vertices, zero-thickness regions, extreme grading, stretched blocks"
+      - "Flag external-flow boundaries that appear too close to the object"
+    evidence_to_extract: ["block cell counts", "grading ratios"]
+    severity_rules: "Zero-thickness or reversed blocks are Critical; extreme grading is a Warning."
+    confidence_rules: "Confirmed from blockMeshDict. Label size judgments as estimates."
+    missing_information_behavior: "If no blockMeshDict, skip and note it."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 4
+    title: "Check patch definitions"
+    purpose: "Ensure patches are consistent across the workflow."
+    required_files: []
+    optional_files: ["constant/polyMesh/boundary", "0/ field files"]
+    checks:
+      - "Compare patches across blockMeshDict, snappyHexMeshDict, polyMesh/boundary, and 0/ fields"
+      - "Flag inconsistent names, missing patches, unintended defaultFaces, wrong patch types"
+      - "Flag missing expected symmetry/empty patches and walls treated as generic open patches"
+    evidence_to_extract: ["patch names and types per source"]
+    severity_rules: "Name mismatches that break field coverage are Critical."
+    confidence_rules: "Confirmed if polyMesh/boundary exists; otherwise provisional."
+    missing_information_behavior: "If no polyMesh/boundary, infer from dicts and label provisional."
+    allowed_recommendation_categories: ["boundary_conditions", "mesh"]
+
+  - number: 5
+    title: "Audit surface and region refinement"
+    purpose: "Balance resolution against cost."
+    required_files: []
+    optional_files: ["system/snappyHexMeshDict"]
+    checks:
+      - "Inspect refinementSurfaces, refinementRegions, feature refinement, levels, cell limits, buffer layers"
+      - "Flag under-refined key surfaces, excessive global refinement, abrupt level jumps"
+      - "Flag thin features smaller than local cells and cell limits that conflict with requested refinement"
+    evidence_to_extract: ["refinement levels", "maxGlobalCells / maxLocalCells"]
+    severity_rules: "Cell limits below requested refinement are a Warning to Critical."
+    confidence_rules: "Confirmed from snappyHexMeshDict."
+    missing_information_behavior: "If not snappy-based, skip."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 6
+    title: "Audit snapping settings"
+    purpose: "Check surface capture quality."
+    required_files: []
+    optional_files: ["system/snappyHexMeshDict"]
+    checks:
+      - "Inspect tolerance, smoothing, feature snapping, explicit/implicit feature controls, iteration counts"
+      - "Identify settings that appear too weak or overly aggressive"
+    evidence_to_extract: ["nSmoothPatch", "tolerance", "nSolveIter"]
+    severity_rules: "Weak snapping on curved geometry is a Warning."
+    confidence_rules: "Confirmed from the snapControls block."
+    missing_information_behavior: "If absent, skip."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 7
+    title: "Audit boundary-layer settings"
+    purpose: "Prevent layer collapse and misplaced layers."
+    required_files: []
+    optional_files: ["system/snappyHexMeshDict"]
+    checks:
+      - "Inspect layer patches, nSurfaceLayers, thickness, expansionRatio, minThickness, feature angles"
+      - "Flag layers on inlets/outlets/symmetry, excessive expansion, too many layers for the base mesh"
+      - "Flag conflicting sizing methods and likely layer collapse at sharp geometry"
+    evidence_to_extract: ["nSurfaceLayers", "expansionRatio", "finalLayerThickness"]
+    severity_rules: "Layers requested on inlet/outlet/symmetry is a Warning."
+    confidence_rules: "Confirmed from the addLayersControls block."
+    missing_information_behavior: "If absent, skip."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 8
+    title: "Audit mesh-quality controls"
+    purpose: "Separate allowed limits from measured quality."
+    required_files: []
+    optional_files: ["system/meshQualityDict", "system/snappyHexMeshDict"]
+    checks:
+      - "Inspect thresholds for non-orthogonality, skewness, concavity, determinant, face weight, volume ratio"
+      - "Distinguish configured allowed limits from actual measured mesh quality"
+    evidence_to_extract: ["maxNonOrtho", "maxBoundarySkewness", "minDeterminant"]
+    severity_rules: "Very loose limits are Informational; they permit but do not prove bad cells."
+    confidence_rules: "Confirmed from meshQualityDict; measured quality needs checkMesh."
+    missing_information_behavior: "State measured quality requires running checkMesh."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 9
+    title: "Analyze available final-mesh evidence"
+    purpose: "Read real quality metrics if provided."
+    required_files: []
+    optional_files: ["uploaded checkMesh report"]
+    checks:
+      - "From a checkMesh report, extract cells/faces/points, topology/geometry failures"
+      - "Extract max skewness, max non-orthogonality, aspect ratio, negative volumes, determinant problems, failed checks"
+      - "If the app cannot compute these from raw polyMesh data, say so; do not fake checkMesh"
+    evidence_to_extract: ["failed checks", "max non-orthogonality", "max skewness"]
+    severity_rules: "Any reported failed check or negative volume is Critical."
+    confidence_rules: "Confirmed only from an actual checkMesh report."
+    missing_information_behavior: "If no report, request that the user run checkMesh and paste output."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 10
+    title: "Produce an ordered remeshing plan"
+    purpose: "Rank changes by impact and cost."
+    required_files: []
+    optional_files: []
+    checks:
+      - "For each recommendation: file, dictionary section, current setting, proposed change, reason"
+      - "Include expected improvement and what to inspect after remeshing"
+      - "Order by impact vs cost"
+    evidence_to_extract: []
+    severity_rules: "Fix invalid mesh (negative volumes) before tuning tolerances."
+    confidence_rules: "Carry each finding's label into the plan."
+    missing_information_behavior: "Prefer requesting checkMesh over guessing quality."
+    allowed_recommendation_categories: ["mesh", "geometry", "boundary_conditions"]
+
+post_checklist_reasoning: >
+  After the 10 steps, search retrieved examples for similar meshing failures and
+  consider additional geometry or mesh-configuration issues not directly covered.

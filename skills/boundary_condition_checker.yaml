@@ -1,0 +1,155 @@
+# Structured 10-step procedure for the Boundary Condition Checker skill.
+id: boundary_condition_checker
+name: "Boundary Condition Checker"
+purpose: "Verify that every mesh patch has a structurally valid, physically appropriate, and cross-field-compatible condition."
+description: "Review the 0/ boundary and initial conditions for mistakes."
+relevant_files:
+  - "constant/polyMesh/boundary"
+  - "all 0/ initial field files"
+  - "system/blockMeshDict, system/snappyHexMeshDict"
+  - "constant/turbulenceProperties or constant/momentumTransport"
+  - "constant/transportProperties or thermophysical files"
+  - "system/fvSolution, system/fvSchemes"
+
+steps:
+  - number: 1
+    title: "Build the authoritative patch list"
+    purpose: "Know exactly which patches exist."
+    required_files: []
+    optional_files: ["constant/polyMesh/boundary"]
+    checks:
+      - "Use constant/polyMesh/boundary when available: record name, type, nFaces, likely role"
+      - "If the final mesh is absent, infer patches from mesh dictionaries and label provisional"
+    evidence_to_extract: ["patch names", "patch types"]
+    severity_rules: "A missing patch list blocks full verification."
+    confidence_rules: "Confirmed from polyMesh/boundary; provisional if inferred."
+    missing_information_behavior: "If no boundary file, mark the patch list provisional and request it."
+    allowed_recommendation_categories: []
+
+  - number: 2
+    title: "Build the required field list"
+    purpose: "Know which fields the physics needs."
+    required_files: ["0/ field files"]
+    optional_files: ["constant/turbulenceProperties"]
+    checks:
+      - "Identify existing and expected fields (U, p, T/energy, k, omega, epsilon, nuTilda, rho, phase fraction, species)"
+      - "Flag fields required by the selected physics but missing"
+    evidence_to_extract: ["present 0/ fields", "turbulence model"]
+    severity_rules: "A required field with no file is Critical."
+    confidence_rules: "Confirmed by listing 0/ and reading the turbulence model."
+    missing_information_behavior: "If the model is unknown, list conditional requirements."
+    allowed_recommendation_categories: ["initial_fields"]
+
+  - number: 3
+    title: "Check patch completeness across every field"
+    purpose: "Every field must cover every patch exactly once."
+    required_files: ["0/ field files"]
+    optional_files: ["constant/polyMesh/boundary"]
+    checks:
+      - "Verify each field has exactly one entry per mesh patch"
+      - "Flag missing patches, extra patches, duplicate entries, capitalization mismatches, unintended defaultFaces"
+    evidence_to_extract: ["per-field patch coverage"]
+    severity_rules: "Any missing or misspelled patch in a field is Critical (run will fail)."
+    confidence_rules: "Confirmed when both the boundary list and the field files are present."
+    missing_information_behavior: "If boundary list is provisional, mark coverage findings Likely."
+    allowed_recommendation_categories: ["boundary_conditions"]
+
+  - number: 4
+    title: "Check field dimensions and value structure"
+    purpose: "Catch structural/dimensional errors."
+    required_files: ["0/ field files"]
+    optional_files: []
+    checks:
+      - "Verify scalar vs vector vs tensor shapes, dimensions, uniform/nonuniform syntax, required value entries"
+    evidence_to_extract: ["dimensions per field", "value structure"]
+    severity_rules: "Wrong dimensions or malformed entries are Critical."
+    confidence_rules: "Confirmed from the field file."
+    missing_information_behavior: "If a field is missing, request it."
+    allowed_recommendation_categories: ["boundary_conditions", "initial_fields"]
+
+  - number: 5
+    title: "Classify each patch's physical role"
+    purpose: "Interpret intent before judging conditions."
+    required_files: []
+    optional_files: ["constant/polyMesh/boundary"]
+    checks:
+      - "Classify as inlet, outlet, wall, symmetry, cyclic/interface, far field, moving wall, empty 2D, coupled, or unknown"
+      - "Do not guess when unclear; mark unknown or request clarification"
+    evidence_to_extract: ["inferred role per patch"]
+    severity_rules: "Unknown roles limit confidence downstream."
+    confidence_rules: "Likely from patch type/name; Unknown if ambiguous."
+    missing_information_behavior: "Ask the user to confirm ambiguous roles."
+    allowed_recommendation_categories: []
+
+  - number: 6
+    title: "Evaluate velocity conditions"
+    purpose: "Find inconsistent or nonphysical U conditions."
+    required_files: ["0/U"]
+    optional_files: []
+    checks:
+      - "Flag fixed velocity at outlets, zero velocity on moving walls, zeroGradient inlet with no imposed flow"
+      - "Flag reverse-flow risk, flow crossing symmetry/impermeable walls, inconsistent freestream direction"
+    evidence_to_extract: ["U BC per patch"]
+    severity_rules: "Over-constrained or nonphysical U is a Warning to Critical."
+    confidence_rules: "Confirmed from 0/U."
+    missing_information_behavior: "If 0/U missing, request it."
+    allowed_recommendation_categories: ["boundary_conditions"]
+
+  - number: 7
+    title: "Evaluate pressure conditions and reference strategy"
+    purpose: "Ensure a well-posed pressure problem."
+    required_files: ["0/p or 0/p_rgh"]
+    optional_files: []
+    checks:
+      - "Flag too many fixed-pressure boundaries and no pressure reference where required"
+      - "Flag over-constrained p+U, gauge vs absolute confusion, wrong pressure field name, compressibility mismatch"
+    evidence_to_extract: ["p BC per patch", "pressure reference presence"]
+    severity_rules: "No reference in a closed incompressible case is Critical."
+    confidence_rules: "Confirmed from the pressure field and solver type."
+    missing_information_behavior: "If the pressure field is missing, request it."
+    allowed_recommendation_categories: ["boundary_conditions"]
+
+  - number: 8
+    title: "Evaluate wall, symmetry, and 2D behavior"
+    purpose: "Validate wall/symmetry/empty handling."
+    required_files: ["0/ field files"]
+    optional_files: []
+    checks:
+      - "Verify wall velocity/thermal/turbulence treatment, symmetry consistency, empty patches for 2D, moving-wall values"
+    evidence_to_extract: ["wall/symmetry/empty conditions"]
+    severity_rules: "Empty patch inconsistency in a 2D case is Critical."
+    confidence_rules: "Confirmed from field files and patch types."
+    missing_information_behavior: "If 2D/3D intent is unclear, ask."
+    allowed_recommendation_categories: ["boundary_conditions"]
+
+  - number: 9
+    title: "Check turbulence-field compatibility"
+    purpose: "Match turbulence BCs to the model."
+    required_files: ["constant/turbulenceProperties"]
+    optional_files: ["0/k", "0/omega", "0/epsilon", "0/nut"]
+    checks:
+      - "Determine required turbulence fields for the selected model"
+      - "Verify required fields exist, values are positive/plausible, inlet/outlet compatible"
+      - "Verify wall functions match the model and wall-resolution strategy"
+    evidence_to_extract: ["turbulence model", "wall-function types"]
+    severity_rules: "Missing required turbulence field is Critical."
+    confidence_rules: "Confirmed from the model file and 0/ fields."
+    missing_information_behavior: "If the model file is missing, request it."
+    allowed_recommendation_categories: ["boundary_conditions", "turbulence"]
+
+  - number: 10
+    title: "Produce a patch-by-field compatibility matrix"
+    purpose: "Summarize everything in one table."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Return a table: patch, inferred role, condition per field, status, severity, correction, missing info"
+    evidence_to_extract: []
+    severity_rules: "Highlight Critical rows first."
+    confidence_rules: "Carry each cell's evidence label."
+    missing_information_behavior: "List any missing files/roles under missing info."
+    allowed_recommendation_categories: ["boundary_conditions", "turbulence", "initial_fields"]
+
+post_checklist_reasoning: >
+  After the 10 steps, perform additional cross-file reasoning and use retrieved
+  documentation or solved cases to identify less obvious condition interactions.

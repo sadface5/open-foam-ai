@@ -1,0 +1,167 @@
+# Structured 10-step procedure for the Solver Divergence Debugger skill.
+# This is a REQUIRED FOUNDATION, not the only source of reasoning. After the 10
+# steps, Claude also applies broader reasoning, RAG, and pattern recognition.
+id: divergence_debugger
+name: "Solver Divergence Debugger"
+purpose: "Diagnose why a case is likely to diverge, or why an uploaded solver log shows instability."
+description: "The run blew up: floating point error, nan/inf, or exploding residuals."
+relevant_files:
+  - "solver log (paste or attach)"
+  - "system/controlDict"
+  - "system/fvSchemes"
+  - "system/fvSolution"
+  - "0/ initial field files"
+  - "constant/turbulenceProperties or constant/momentumTransport"
+  - "constant/transportProperties or thermophysical files"
+  - "constant/polyMesh/boundary"
+  - "uploaded checkMesh output"
+
+steps:
+  - number: 1
+    title: "Determine whether divergence is actually documented"
+    purpose: "Distinguish a confirmed divergence from a pre-run risk audit."
+    required_files: []
+    optional_files: ["solver log"]
+    checks:
+      - "Search logs for floating-point exceptions, nan/inf, rapidly increasing residuals"
+      - "Search for negative physical quantities, excessive Courant numbers, continuity errors"
+      - "Search for linear solver failures or solver crashes"
+    evidence_to_extract: ["exact crash line", "residual trend", "Courant numbers if printed"]
+    severity_rules: "A confirmed crash line is Critical. Risk-only (no log) is Informational."
+    confidence_rules: "Confirmed only if a log shows it. With no log, cap at Possible and call it a risk audit."
+    missing_information_behavior: "If there is no solver log, state this is a pre-run divergence-risk audit, not a confirmed diagnosis."
+    allowed_recommendation_categories: ["request_log"]
+
+  - number: 2
+    title: "Identify the first field or equation that becomes unstable"
+    purpose: "Find the true origin, not just the final fatal error."
+    required_files: []
+    optional_files: ["solver log"]
+    checks:
+      - "Determine which field first shows abnormal residuals or values (p, U, T, rho, k, omega, epsilon, phase fraction)"
+      - "Do not focus only on the final fatal error"
+    evidence_to_extract: ["first field to misbehave", "iteration/time it started"]
+    severity_rules: "The first unstable field points to the root cause; treat as high-value evidence."
+    confidence_rules: "Confirmed if visible in the log; otherwise Unknown."
+    missing_information_behavior: "If no log, say the first-unstable-field cannot be determined and ask for the log."
+    allowed_recommendation_categories: ["request_log"]
+
+  - number: 3
+    title: "Classify when the failure occurs"
+    purpose: "Use timing as a diagnostic clue."
+    required_files: []
+    optional_files: ["solver log"]
+    checks:
+      - "Classify as immediate startup, first few iterations, gradual, late, oscillation, or unknown"
+    evidence_to_extract: ["failure timing class"]
+    severity_rules: "Timing is a clue, not proof."
+    confidence_rules: "Confirmed if the log shows timing; otherwise Unknown."
+    missing_information_behavior: "If no log, mark timing Unknown."
+    allowed_recommendation_categories: []
+
+  - number: 4
+    title: "Audit initial values and physical plausibility"
+    purpose: "Catch unphysical or dimensionally wrong starting values."
+    required_files: ["0/ field files"]
+    optional_files: ["constant/transportProperties"]
+    checks:
+      - "Inspect internalField values, dimensions, and boundary values"
+      - "Check velocity magnitude, pressure, temperature, density, viscosity, turbulence quantities"
+      - "Flag negative, zero, extreme, inconsistent, or dimensionally incorrect values"
+    evidence_to_extract: ["internalField values", "dimensions lines"]
+    severity_rules: "Negative/zero turbulence values or wrong dimensions are Critical."
+    confidence_rules: "Confirmed if read directly from a field file."
+    missing_information_behavior: "If 0/ files are missing, request them."
+    allowed_recommendation_categories: ["initial_fields"]
+
+  - number: 5
+    title: "Incorporate Boundary Condition Checker findings"
+    purpose: "Rule out BC-driven instability."
+    required_files: ["0/ field files"]
+    optional_files: ["constant/polyMesh/boundary"]
+    checks:
+      - "Look for conflicting inlet/outlet conditions and incorrect pressure constraints"
+      - "Look for a missing pressure reference and inconsistent turbulence BCs"
+      - "Look for missing patches, walls set as open boundaries, and reverse-flow risk"
+    evidence_to_extract: ["U/p BC pairing per patch", "pressure reference presence"]
+    severity_rules: "Over-constrained or missing pressure reference is Critical."
+    confidence_rules: "Confirmed from field files; Likely if inferred across files."
+    missing_information_behavior: "If polyMesh/boundary is absent, mark patch list provisional."
+    allowed_recommendation_categories: ["boundary_conditions"]
+
+  - number: 6
+    title: "Assess time-step and transient controls"
+    purpose: "Check temporal stability drivers."
+    required_files: ["system/controlDict"]
+    optional_files: ["solver log"]
+    checks:
+      - "Inspect deltaT, adjustTimeStep, maxCo, startTime, endTime, and time integration"
+      - "Do not claim the actual Courant number unless it appears in a supplied log"
+    evidence_to_extract: ["deltaT", "adjustTimeStep", "maxCo"]
+    severity_rules: "Fixed large deltaT with a transient solver is a Warning to Critical."
+    confidence_rules: "Confirmed for settings read from controlDict; Courant number Unknown unless logged."
+    missing_information_behavior: "State that the real Courant number needs a run to verify."
+    allowed_recommendation_categories: ["time_step"]
+
+  - number: 7
+    title: "Audit discretization schemes"
+    purpose: "Find unstable or inconsistent schemes."
+    required_files: ["system/fvSchemes"]
+    optional_files: []
+    checks:
+      - "Inspect ddtSchemes, gradSchemes, divSchemes, laplacianSchemes, interpolationSchemes, snGradSchemes"
+      - "Flag aggressive, unbounded, missing, or inconsistent schemes"
+    evidence_to_extract: ["divSchemes entries", "ddtScheme"]
+    severity_rules: "Unbounded convection on startup is a Warning; missing section is Critical."
+    confidence_rules: "Confirmed from fvSchemes."
+    missing_information_behavior: "If fvSchemes missing, request it."
+    allowed_recommendation_categories: ["schemes"]
+
+  - number: 8
+    title: "Audit linear solvers and algorithm controls"
+    purpose: "Find solver/coupling settings that cause blow-up."
+    required_files: ["system/fvSolution"]
+    optional_files: []
+    checks:
+      - "Inspect solver entries, tolerances, relTol, preconditioners/smoothers"
+      - "Inspect relaxation factors, correctors, non-orthogonal correctors, residualControl"
+      - "Inspect pressure-velocity coupling (SIMPLE/PIMPLE/PISO)"
+    evidence_to_extract: ["relaxationFactors", "nNonOrthogonalCorrectors", "solver entries"]
+    severity_rules: "Missing solver entry for a solved field is Critical; over-aggressive relaxation is a Warning."
+    confidence_rules: "Confirmed from fvSolution."
+    missing_information_behavior: "If fvSolution missing, request it."
+    allowed_recommendation_categories: ["linear_solver", "relaxation"]
+
+  - number: 9
+    title: "Incorporate mesh evidence"
+    purpose: "Separate observed mesh problems from configuration risk."
+    required_files: []
+    optional_files: ["uploaded checkMesh output", "system/blockMeshDict", "system/snappyHexMeshDict"]
+    checks:
+      - "Use uploaded checkMesh reports, blockMeshDict/snappyHexMeshDict, or mesh-quality settings"
+      - "Distinguish observed final-mesh problems from risks inferred only from config files"
+    evidence_to_extract: ["max non-orthogonality", "max skewness", "negative volumes"]
+    severity_rules: "Negative volumes / failed checks are Critical if observed."
+    confidence_rules: "Confirmed only from an actual checkMesh report; config-only is Possible."
+    missing_information_behavior: "If no checkMesh output, say mesh quality needs a run to confirm."
+    allowed_recommendation_categories: ["mesh"]
+
+  - number: 10
+    title: "Rank likely causes and recommend a controlled recovery plan"
+    purpose: "Deliver at most three ranked causes with the smallest reversible fix each."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Return no more than three ranked causes"
+      - "For each: evidence, confidence, exact files/entries, smallest reversible fix, expected benefit, downside, how to verify after running"
+      - "Do not recommend many unrelated changes at once"
+    evidence_to_extract: []
+    severity_rules: "Rank by (confidence x impact)."
+    confidence_rules: "Carry each cause's evidence label through to the ranking."
+    missing_information_behavior: "If evidence is thin, prefer requesting files over guessing."
+    allowed_recommendation_categories: ["time_step", "relaxation", "schemes", "linear_solver", "boundary_conditions", "initial_fields", "mesh"]
+
+post_checklist_reasoning: >
+  After the 10 steps, look for unusual cross-file inconsistencies, version-specific
+  issues, solver-specific problems, and patterns from retrieved solved cases that the
+  checklist does not fully cover.

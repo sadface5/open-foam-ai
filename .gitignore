@@ -1,0 +1,29 @@
+# Never commit your secret API key
+.env
+
+# Python cache / virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# PyInstaller build output (the packaged .exe and temp build files)
+build/
+dist/
+*.spec
+
+# Automatic backups made by the safe file editor
+backups/
+
+# Streamlit local files
+.streamlit/secrets.toml
+
+# Local editor / tooling settings (machine-specific)
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

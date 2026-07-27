@@ -1,0 +1,157 @@
+# Structured 10-step procedure for the Solver & Turbulence Model Recommender skill.
+id: solver_model_recommender
+name: "Solver & Turbulence Model Recommender"
+purpose: "Determine whether the case's selected solver, physical models, required fields, and turbulence model are internally consistent."
+description: "Help pick the right solver and turbulence model."
+relevant_files:
+  - "system/controlDict"
+  - "constant/turbulenceProperties or constant/momentumTransport"
+  - "constant/transportProperties"
+  - "thermophysical files"
+  - "phase / species dictionaries"
+  - "dynamic mesh configuration"
+  - "0/ initial fields"
+  - "system/fvSolution, system/fvSchemes, function objects"
+
+steps:
+  - number: 1
+    title: "Extract the intended physical problem"
+    purpose: "Understand the physics before judging the solver."
+    required_files: []
+    optional_files: ["system/controlDict", "constant/transportProperties"]
+    checks:
+      - "Infer internal/external flow, phases, heat transfer, compressibility, turbulence, buoyancy, rotation, moving mesh, combustion, porous media, free surface"
+    evidence_to_extract: ["clues from files and user description"]
+    severity_rules: "Wrong physics assumption invalidates the recommendation."
+    confidence_rules: "Likely from files; Unknown if intent is unclear."
+    missing_information_behavior: "If intent cannot be inferred, say what information is missing."
+    allowed_recommendation_categories: []
+
+  - number: 2
+    title: "Determine steady vs transient intent"
+    purpose: "Detect contradictions across settings."
+    required_files: ["system/controlDict"]
+    optional_files: ["system/fvSchemes"]
+    checks:
+      - "Use application, ddtScheme, deltaT, endTime, algorithm, moving geometry, time-varying BCs"
+      - "Flag contradictions"
+    evidence_to_extract: ["application", "ddtScheme"]
+    severity_rules: "Steady/transient contradiction is Critical."
+    confidence_rules: "Confirmed from controlDict + fvSchemes."
+    missing_information_behavior: "If controlDict missing, request it."
+    allowed_recommendation_categories: ["solver_choice"]
+
+  - number: 3
+    title: "Determine compressibility treatment"
+    purpose: "Classify the pressure/density approach."
+    required_files: []
+    optional_files: ["constant/thermophysicalProperties", "constant/transportProperties"]
+    checks:
+      - "Inspect pressure/density fields, equation of state, thermophysical properties, energy fields, transport properties"
+      - "Classify as incompressible, weakly compressible, compressible, or uncertain"
+    evidence_to_extract: ["p vs p_rgh", "thermoType", "presence of T/e/h"]
+    severity_rules: "Compressibility mismatch with the solver is Critical."
+    confidence_rules: "Likely from field/property files; Unknown if absent."
+    missing_information_behavior: "If thermo files are missing, mark compressibility Unknown."
+    allowed_recommendation_categories: ["solver_choice"]
+
+  - number: 4
+    title: "Identify additional physics"
+    purpose: "Account for extra models."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Check for energy, buoyancy, multiphase, species, combustion, particles, rotating frames, moving meshes, conjugate heat transfer, porous media"
+    evidence_to_extract: ["extra dictionaries present"]
+    severity_rules: "Missing dictionaries for declared physics is Critical."
+    confidence_rules: "Confirmed by presence of the relevant dictionaries."
+    missing_information_behavior: "Ask about physics that cannot be inferred."
+    allowed_recommendation_categories: ["solver_choice"]
+
+  - number: 5
+    title: "Identify the current solver family and required inputs"
+    purpose: "Map the solver to its file requirements."
+    required_files: ["system/controlDict"]
+    optional_files: []
+    checks:
+      - "Determine the solver/family and list required fields and dictionaries"
+      - "List missing files, unnecessary files, files that belong to another solver, and version uncertainty"
+    evidence_to_extract: ["application", "present vs required files"]
+    severity_rules: "Files from a different solver family is a Warning to Critical."
+    confidence_rules: "Confirmed from controlDict + file inventory."
+    missing_information_behavior: "If application is absent, request it."
+    allowed_recommendation_categories: ["solver_choice"]
+
+  - number: 6
+    title: "Determine whether turbulence modeling is necessary"
+    purpose: "Estimate the flow regime carefully."
+    required_files: []
+    optional_files: ["constant/transportProperties", "0/U"]
+    checks:
+      - "Use velocity, viscosity, density, characteristic length, geometry, user description"
+      - "Estimate the Reynolds-number regime ONLY when enough information exists; do not invent a characteristic length"
+    evidence_to_extract: ["nu", "velocity magnitude", "stated length scale"]
+    severity_rules: "Turbulence necessity is guidance, not a defect."
+    confidence_rules: "Possible at best unless a length scale is provided."
+    missing_information_behavior: "If length scale is unknown, say Reynolds number cannot be computed."
+    allowed_recommendation_categories: ["turbulence"]
+
+  - number: 7
+    title: "Choose the turbulence family"
+    purpose: "Pick laminar / RAS / LES / DES."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Evaluate laminar, RAS, LES, DES/hybrid"
+      - "Explain cost, mesh requirements, time-resolution needs, expected fidelity, beginner suitability"
+    evidence_to_extract: []
+    severity_rules: "n/a (recommendation)."
+    confidence_rules: "Frame as recommendation with assumptions."
+    missing_information_behavior: "State assumptions explicitly."
+    allowed_recommendation_categories: ["turbulence"]
+
+  - number: 8
+    title: "Evaluate specific turbulence model suitability"
+    purpose: "Compare candidate models."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Compare on separation, adverse pressure gradients, near-wall behavior, external aero, free shear, wall resolution, required fields, cost"
+    evidence_to_extract: []
+    severity_rules: "n/a (recommendation)."
+    confidence_rules: "Recommendation with tradeoffs."
+    missing_information_behavior: "Note which flow features are unknown."
+    allowed_recommendation_categories: ["turbulence"]
+
+  - number: 9
+    title: "Verify required fields, boundary conditions, and numerics"
+    purpose: "Make sure the recommendation is runnable."
+    required_files: ["0/ field files", "system/fvSolution", "system/fvSchemes"]
+    optional_files: []
+    checks:
+      - "For the recommended model verify required 0/ fields exist with correct dimensions and plausible values"
+      - "Verify boundary conditions and wall functions are compatible"
+      - "Verify fvSolution has solver entries and fvSchemes has the required terms"
+    evidence_to_extract: ["required vs present fields", "wall-function types"]
+    severity_rules: "Missing required field/solver entry for the recommendation is Critical."
+    confidence_rules: "Confirmed from the case files."
+    missing_information_behavior: "List what must be added to adopt the recommendation."
+    allowed_recommendation_categories: ["turbulence", "initial_fields", "linear_solver", "schemes"]
+
+  - number: 10
+    title: "Return ranked compatible configurations"
+    purpose: "Give a recommended, a simpler, and a higher-fidelity option."
+    required_files: []
+    optional_files: []
+    checks:
+      - "Provide: recommended, simpler alternative, higher-fidelity alternative (when appropriate)"
+      - "For each: assumptions, solver family, turbulence model, required fields, required changes, difficulty, limitations, missing info"
+    evidence_to_extract: []
+    severity_rules: "Mark solver changes as large; require confirmation."
+    confidence_rules: "Carry assumptions and labels into each option."
+    missing_information_behavior: "List missing info that would change the ranking."
+    allowed_recommendation_categories: ["solver_choice", "turbulence", "initial_fields"]
+
+post_checklist_reasoning: >
+  After the 10 steps, use additional reasoning and retrieved knowledge to identify
+  other viable configurations or version-specific compatibility issues.
