@@ -102,6 +102,14 @@ class FileEditor:
         if not was_new:
             safe_name = proposal.file_path.replace("/", "__").replace("\\", "__")
             backup = self.backups_dir / f"{timestamp}__{safe_name}.bak"
+            # The timestamp only resolves to the second, so two edits to the same
+            # file in quick succession would otherwise land on the same filename
+            # and the newer backup would overwrite -- and destroy -- the older
+            # one, losing the original content for good. Never overwrite.
+            counter = 1
+            while backup.exists():
+                backup = self.backups_dir / f"{timestamp}-{counter}__{safe_name}.bak"
+                counter += 1
             shutil.copy2(target, backup)  # back up BEFORE writing
             backup_abs = str(backup)
         else:

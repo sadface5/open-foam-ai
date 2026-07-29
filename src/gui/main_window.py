@@ -28,16 +28,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..autonomous import run_loop
 from ..case_compare import compare_cases
 from ..case_reader import case_inventory, read_case
 from ..case_survey import read_case_full, survey_case
+from ..command_runner import best_install
+from ..debug_memory import load_session, save_session
 from ..config import DEFAULT_MODEL_TIER, MODELS
 from ..deterministic import run_deterministic_checks
 from ..diagnoser import propose_edits, run_full_turn
 from ..rules import run_all_checks
+from ..edit_history import VersionedEditor
 from ..file_editor import FileEditor
 from ..intent import classify_intent
 from ..knowledge_base import KnowledgeBase
+from ..retrieval import DebugRetriever
 from ..skills import SKILL_DESCRIPTIONS, list_skills
 from .chat import ChatView
 from .dialogs import EditReviewDialog, SettingsDialog
@@ -63,13 +68,16 @@ class MainWindow(QMainWindow):
 
         # --- state ---
         self.kb = KnowledgeBase()
+        # Searches /knowledge AND cases solved previously on this machine.
+        self.retriever = DebugRetriever(self.kb)
+        self.survey: dict | None = None
         self.model_tier = DEFAULT_MODEL_TIER
         self.active_skill = AUTO_LABEL
         self.case_root: str | None = None
         self.case_files: dict[str, str] = {}
         self.inventory: dict = {}
         self.attachments: dict[str, str] = {}
-        self.editor: FileEditor | None = None
+        self.editor: VersionedEditor | None = None
         self.applied_edits: list[str] = []
         self.last_diagnosis = ""
         self.active_worker = None
@@ -120,6 +128,14 @@ class MainWindow(QMainWindow):
         folder_btn = QPushButton("📁 Select Case Folder")
         folder_btn.clicked.connect(self._select_case_folder)
         tb.addWidget(folder_btn)
+        self.autodebug_btn = QPushButton("🔬 Auto-debug")
+        self.autodebug_btn.setToolTip(
+            "Investigate the case step by step: rank the likely causes, run read-only "
+            "diagnostics, and report what it found. Nothing is changed without your "
+            "approval."
+        )
+        self.autodebug_btn.clicked.connect(self._run_autonomous_debug)
+        tb.addWidget(self.autodebug_btn)
         self.compare_btn = QPushButton("⇄ Compare with working case")
         self.compare_btn.setToolTip(
             "Compare the selected (broken) case against a case that works, and rank "
@@ -311,7 +327,10 @@ class MainWindow(QMainWindow):
             self._add("assistant", f"❌ Could not read that folder: {e}")
             return
         self.case_root = folder
-        self.editor = FileEditor(folder)
+        # VersionedEditor wraps FileEditor: same safety guarantees (path check,
+        # backup before write, undo) plus a per-file version history recording
+        # why each change was made.
+        self.editor = VersionedEditor(folder)
         self.undo_btn.setEnabled(self.editor.can_undo())
         self.case_label.setText(f"📁 Case: {folder}   ({len(self.case_files)} file(s) loaded)")
         self._add("assistant", f"Loaded the case folder ({len(self.case_files)} files). "
@@ -365,7 +384,11 @@ class MainWindow(QMainWindow):
                                    case_path=self.case_root)
                     if (intent.needs_diagnosis and self.case_files) else [])
         do_rag = intent.needs_diagnosis or intent.name in ("general_question", "recommendation", "compare_options")
-        snippets = self.kb.search(f"{intent.focus} {typed}") if do_rag else []
+        # Retrieval runs BEFORE the model reasons, and now also searches cases
+        # solved previously on this machine, not just the /knowledge folder.
+        snippets = (self.retriever.retrieve(f"{intent.focus} {typed}",
+                                            findings=findings).items
+                    if do_rag else [])
 
         self._begin_loading()
         self._set_busy(True)
@@ -480,6 +503,49 @@ class MainWindow(QMainWindow):
             self._add("assistant", f"↩ Undid the change to `{record.file_path}` (restored the previous version).")
             self._refresh_case_files()
         self.undo_btn.setEnabled(self.editor.can_undo())
+
+    def _run_autonomous_debug(self):
+        """
+        Investigate the case step by step.
+
+        Runs read-only first and reports what it would do next. Anything that
+        would modify the case is listed and left for the user to approve, so the
+        button can never quietly change files or start a solver.
+        """
+        if not self.case_root:
+            self._add("assistant",
+                      "Select a case folder first (📁 Select Case Folder), then I can "
+                      "investigate it.")
+            return
+
+        session = load_session(self.case_root)
+        self._add("assistant", "🔬 Investigating the case — running read-only checks…")
+        self._set_busy(True)
+        try:
+            result = run_loop(self.case_root, allow_writes=False, session=session)
+        except Exception as e:
+            self._add("assistant", f"❌ The investigation could not run: {e}")
+            return
+        finally:
+            self._set_busy(False)
+
+        lines = ["### Investigation", "", result.summary()]
+
+        install = best_install()
+        if install is None:
+            lines += ["", "_No OpenFOAM installation was found, so I could only analyse the "
+                          "files. Install OpenFOAM (WSL, Docker, a native package, or "
+                          "blueCFD-Core) to let me run diagnostics such as checkMesh._"]
+        elif result.blocked_actions:
+            lines += ["", f"_Using **{install.describe()}**. The steps above need your "
+                          f"approval because they would modify the case._"]
+        else:
+            lines += ["", f"_Using **{install.describe()}**._"]
+
+        self._add("assistant", "\n".join(lines))
+        save_session(session)
+        self.conversations[self.convo_index]["last_investigation"] = result.summary()
+        self._refresh_case_files()
 
     def _compare_with_working_case(self):
         """

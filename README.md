@@ -200,7 +200,13 @@ Then:
    left is set to **Auto** by default; you can override it to force a specific skill.
 4. To let the assistant draft a change, click **✎ Propose Edits**. Review the diff,
    then **✔ Apply this change** — the original is backed up first, and **↩ Undo last
-   change** restores it.
+   change** restores it. Every change is versioned, so you can roll back to any
+   earlier state, and each records the reason, confidence and evidence behind it.
+5. Click **🔬 Auto-debug** to have it investigate on its own: it ranks the likely
+   causes, runs read-only diagnostics, and reports what it found. Anything that
+   would modify the case is listed for your approval rather than done.
+6. Click **⇄ Compare with working case** if you have a version that runs — it ranks
+   the differences by how likely each is to be the culprit.
 
 Want to try it immediately? Point **Select Case Folder** at
 [`examples/broken_case`](examples/broken_case) (which has a deliberately missing

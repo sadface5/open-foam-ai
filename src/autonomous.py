@@ -31,7 +31,9 @@ from typing import Callable, Optional
 
 from . import command_runner as cr
 from .case_survey import read_case_full, survey_case
-from .debug_memory import AttemptRecord, DebugSession
+from .debug_memory import (AttemptRecord, DebugSession, record_solved_case,
+                           save_session)
+from .rules.context import CaseContext
 from .experiment import (FAILURE, INCONCLUSIVE, SUCCESS, evaluate,
                          evaluate_findings, plan_experiment)
 from .hypothesis import REFUTED, build_hypotheses, format_hypotheses
@@ -268,6 +270,26 @@ def run_loop(case_path: str, *, max_iterations: int = DEFAULT_MAX_ITERATIONS,
     if not result.stop_reason:
         result.stop_reason = STOP_MAX_ITERATIONS
     session.stop_reason = result.stop_reason
+
+    # --- learn from the session -------------------------------------------------
+    # Save what was tried so a restart does not lose it, and -- when something
+    # actually worked -- record it so future diagnoses can recall this case.
+    try:
+        save_session(session)
+        if session.successful_fixes:
+            ctx = CaseContext(read_case_full(case_path))
+            record_solved_case(
+                session,
+                solver=ctx.application,
+                turbulence=ctx.turbulence_model,
+                problem="; ".join(h.title for h in result.hypotheses[:2]),
+                confidence=(result.hypotheses[0].confidence_label
+                            if result.hypotheses else ""),
+            )
+            emit("learned", fixes=len(session.successful_fixes))
+    except Exception:      # learning is a bonus; it must never break the run
+        pass
+
     emit("stop", reason=result.stop_reason, resolved=result.resolved)
     return result
 
