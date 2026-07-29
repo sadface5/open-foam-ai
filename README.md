@@ -79,8 +79,18 @@ The five skills:
 - **Safe file editing** — the assistant proposes complete file changes; you see a
   colored diff and a reason, and nothing is written until you click **Apply**. Every
   edit is backed up automatically, with one-click **undo**.
+- **Working-vs-broken comparison** — point it at a case that runs and one that
+  doesn't; it diffs them semantically and ranks each difference by how likely it is
+  to be the culprit, ignoring cosmetic churn.
+- **Log & mesh intelligence** — reads residual *trends*, which field diverged first,
+  Courant growth and clipping; judges `checkMesh` against practitioner thresholds
+  and ties mesh quality to the observed solver behaviour.
+- **Optional OpenFOAM integration** — detects installations across WSL, Docker,
+  native packages, conda, Spack, environment modules and blueCFD-Core, and can run
+  read-only diagnostics (including in parallel via `mpirun`).
 - **Model selector** (Fast / Balanced / Deep / Agentic) to trade speed vs. depth.
-- **Read-only by default** — it never modifies your case unless you approve a diff.
+- **Read-only by default** — it never modifies your case or runs a solver unless you
+  approve it.
 
 ---
 
@@ -245,9 +255,11 @@ folder; each user sets their own API key via **Settings**.
 
 ## Current limitations
 
-- **It cannot run OpenFOAM.** It does not execute solvers, `checkMesh`, `blockMesh`,
-  or `snappyHexMesh`, and never claims a fix is "verified" — only a real run can
-  confirm that. Mesh-quality questions need a `checkMesh` report to be conclusive.
+- **Running OpenFOAM is optional and off by default.** If an installation is
+  detected the assistant can run read-only utilities such as `checkMesh`; anything
+  that modifies a case requires your approval. With no installation detected it
+  falls back to read-only analysis and tells you so. Mesh-quality questions still
+  need a `checkMesh` report to be conclusive.
 - **Requires internet + an Anthropic API key**, and each diagnosis costs a small
   amount of API usage.
 - **The OpenFOAM dictionary parser used for deterministic checks is best-effort**;
