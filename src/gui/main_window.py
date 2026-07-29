@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -32,8 +33,11 @@ from ..autonomous import run_loop
 from ..case_compare import compare_cases
 from ..case_reader import case_inventory, read_case
 from ..case_survey import read_case_full, survey_case
-from ..command_runner import best_install
+from ..command_runner import (WRITE_COMMANDS, CommandNotAllowed, best_install,
+                              run_command)
 from ..debug_memory import load_session, save_session
+from ..mesh_intelligence import analyze_checkmesh
+from ..openfoam_env import environment_report
 from ..config import DEFAULT_MODEL_TIER, MODELS
 from ..deterministic import run_deterministic_checks
 from ..diagnoser import propose_edits, run_full_turn
@@ -376,6 +380,10 @@ class MainWindow(QMainWindow):
             self._start_edit_flow(combined, intent.focus)
             return
 
+        if intent.name == "run_command":
+            self._run_openfoam_command(intent.command)
+            return
+
         intent_d = intent.as_dict()
         # run_all_checks = the original deterministic checks PLUS the cross-file
         # rule engine, de-duplicated and ranked. RuleFinding is drop-in compatible
@@ -503,6 +511,81 @@ class MainWindow(QMainWindow):
             self._add("assistant", f"↩ Undid the change to `{record.file_path}` (restored the previous version).")
             self._refresh_case_files()
         self.undo_btn.setEnabled(self.editor.can_undo())
+
+    def _run_openfoam_command(self, command):
+        """
+        Run an OpenFOAM utility the user asked for by name, and show its output.
+
+        Read-only utilities run straight away. Anything that would modify the
+        case is confirmed first, because the user typing "run blockMesh" should
+        still get a say before their mesh is regenerated.
+        """
+        if not command:
+            return
+        name = command[0]
+
+        if not self.case_root:
+            self._add("assistant",
+                      f"I can run `{name}`, but I need a case folder first — "
+                      f"click **📁 Select Case Folder**.")
+            return
+
+        install = best_install()
+        if install is None:
+            self._add("assistant",
+                      f"I can't run `{name}` because no OpenFOAM installation was found "
+                      f"on this computer.\n\n" + environment_report())
+            return
+
+        needs_write = name in WRITE_COMMANDS
+        if needs_write:
+            answer = QMessageBox.question(
+                self, "Run a command that modifies the case?",
+                f"`{name}` will modify files in:\n\n{self.case_root}\n\n"
+                f"Existing files are not backed up by OpenFOAM itself. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self._add("assistant", f"Cancelled — `{name}` was not run.")
+                return
+
+        self._add("assistant", f"▶ Running `{name}` using {install.describe()}…")
+        self._set_busy(True)
+        try:
+            result = run_command(command, self.case_root, install=install,
+                                 allow_write=needs_write)
+        except CommandNotAllowed as e:
+            self._add("assistant", f"I won't run that: {e}")
+            return
+        except Exception as e:
+            self._add("assistant", f"❌ `{name}` could not be launched: {e}")
+            return
+        finally:
+            self._set_busy(False)
+
+        status = "✅ succeeded" if result.ok else f"❌ failed (exit {result.exit_code})"
+        body = [f"**`{name}` {status}** in {result.duration_s:.1f}s."]
+
+        # Lead with the interpretation -- that is what the user actually wants.
+        # The raw log goes underneath for anyone who wants to read it.
+        if name == "checkMesh" and result.output.strip():
+            quality = analyze_checkmesh(result.output)
+            if quality.parsed:
+                body += ["", f"**Reading:** {quality.summary()}"]
+                for problem in quality.problems[:3]:
+                    body.append(f"- {problem}")
+                correctors = quality.recommended_non_orthogonal_correctors()
+                if correctors is not None:
+                    body.append(f"- Suggested `nNonOrthogonalCorrectors`: **{correctors}**")
+                if not quality.problems:
+                    body.append("- No mesh-quality problems worth acting on.")
+
+        body += ["", "<details><summary>Full output</summary>", "",
+                 "```", result.clean_output() or "(no output)", "```", "</details>"]
+
+        self._add("assistant", "\n".join(body))
+        self._refresh_case_files()
 
     def _run_autonomous_debug(self):
         """

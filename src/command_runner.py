@@ -85,6 +85,25 @@ class CommandResult:
         text = self.output
         return text if len(text) <= chars else "... [earlier output omitted] ...\n" + text[-chars:]
 
+    def clean_output(self, chars: int = 2500) -> str:
+        """
+        The output with OpenFOAM's banner removed.
+
+        Every utility prints ~20 lines of version/host/PID boilerplate before
+        anything useful. Showing that to the user buries the actual result, so
+        we drop everything up to the '// * * *' separator that ends the header.
+        """
+        text = self.output
+        marker = text.find("// * * *")
+        if marker != -1:
+            end = text.find("\n", marker)
+            if end != -1:
+                text = text[end + 1:]
+        text = text.strip()
+        if len(text) > chars:
+            text = "... [earlier output omitted] ...\n" + text[-chars:]
+        return text
+
     def summary(self) -> str:
         name = self.command[0] if self.command else "command"
         if self.timed_out:

@@ -538,11 +538,29 @@ def _detect_override() -> Optional[FoamInstall]:
 
 
 # --- Public API ---------------------------------------------------------------
-def detect_installs() -> list[FoamInstall]:
+# Detection shells out to docker/wsl/spack and can take around a second, mostly
+# spent probing container images. It is called several times per turn, so the
+# result is cached. Call refresh_installs() after installing OpenFOAM or starting
+# a Docker machine.
+_CACHE: Optional[list] = None
+
+
+def refresh_installs() -> list[FoamInstall]:
+    """Forget the cached detection and look again."""
+    global _CACHE
+    _CACHE = None
+    return detect_installs()
+
+
+def detect_installs(use_cache: bool = True) -> list[FoamInstall]:
     """
     Return every OpenFOAM environment we can find, best first.
     Returns an empty list if none is available -- this is not an error.
     """
+    global _CACHE
+    if use_cache and _CACHE is not None:
+        return list(_CACHE)
+
     installs: list[FoamInstall] = []
 
     override = _detect_override()
@@ -569,6 +587,8 @@ def detect_installs() -> list[FoamInstall]:
             continue
         seen.add(inst.key)
         unique.append(inst)
+
+    _CACHE = list(unique)
     return unique
 
 

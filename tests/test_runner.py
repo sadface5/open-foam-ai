@@ -173,6 +173,75 @@ def test_live_disallowed_command_never_reaches_openfoam():
         pass
 
 
+# --- "run checkMesh" must actually run it (reported bug) ----------------------
+def test_run_verb_plus_utility_is_detected_as_a_command():
+    from src.intent import classify_intent, detect_command
+
+    for phrase, expected in [("run checkMesh", "checkMesh"),
+                             ("can you run checkMesh on my case", "checkMesh"),
+                             ("please execute blockMesh", "blockMesh"),
+                             ("run foamDictionary", "foamDictionary")]:
+        assert detect_command(phrase) == [expected], phrase
+        intent = classify_intent(phrase, has_case=True)
+        assert intent.name == "run_command", f"{phrase} -> {intent.name}"
+        assert intent.needs_diagnosis is False
+        assert intent.command == [expected]
+
+
+def test_questions_about_a_utility_are_not_executed():
+    """"why did checkMesh complain" is a question, not an instruction."""
+    from src.intent import classify_intent, detect_command
+
+    for phrase in ("why did checkMesh complain", "what does checkMesh check",
+                   "checkMesh said my mesh is skewed", "is blockMesh needed here"):
+        assert detect_command(phrase) is None, phrase
+        assert classify_intent(phrase, has_case=True).name != "run_command", phrase
+
+
+def test_trivial_messages_do_not_trigger_a_full_diagnosis():
+    """Regression: every message used to run a 3-skill diagnosis (2 API calls)."""
+    from src.intent import classify_intent
+
+    for phrase in ("thanks", "ok", "hello", "great", "what is a Courant number",
+                   "what does fvSchemes do", "how does SIMPLE work"):
+        intent = classify_intent(phrase, has_case=True)
+        assert intent.needs_diagnosis is False, f"{phrase} -> {intent.name} (would diagnose)"
+
+
+def test_real_diagnostic_questions_still_diagnose():
+    """The speed fix must not stop it working when a diagnosis IS wanted."""
+    from src.intent import classify_intent
+
+    for phrase in ("why is this diverging", "my case blew up with nan",
+                   "check the whole case", "is my outlet boundary condition correct"):
+        assert classify_intent(phrase, has_case=True).needs_diagnosis is True, phrase
+
+
+def test_detection_is_cached():
+    """Detection shells out to docker/wsl; repeating it every turn is wasted time."""
+    import time
+
+    from src.openfoam_env import detect_installs, refresh_installs
+
+    refresh_installs()
+    start = time.time()
+    for _ in range(10):
+        detect_installs()
+    assert time.time() - start < 0.5, "detection does not appear to be cached"
+
+
+def test_clean_output_strips_the_openfoam_banner():
+    r = cr.CommandResult(stdout=(
+        "/*------ F ield | OpenFOAM: The Open Source CFD Toolbox ------*/\n"
+        "Build  : _79e353b8\nExec   : checkMesh\nPID    : 378\n"
+        "// * * * * * * * * * * * * * * * * * * * * * * * * * * //\n"
+        "Mesh stats\n    cells: 400\nMesh OK.\n"))
+    cleaned = r.clean_output()
+    assert "Mesh stats" in cleaned and "Mesh OK." in cleaned
+    assert "OpenFOAM: The Open Source" not in cleaned
+    assert "PID" not in cleaned
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = skipped = 0

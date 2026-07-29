@@ -30,6 +30,7 @@ class Intent:
     needs_diagnosis: bool = True    # run a fresh internal diagnosis?
     detail_level: str = "normal"    # brief | normal | detailed | simpler
     focus: str = ""                 # short topic, e.g. "outlet boundary condition"
+    command: list = field(default_factory=list)   # OpenFOAM utility to actually run
 
     def as_dict(self) -> dict:
         return {
@@ -38,7 +39,39 @@ class Intent:
             "needs_diagnosis": self.needs_diagnosis,
             "detail_level": self.detail_level,
             "focus": self.focus,
+            "command": self.command,
         }
+
+
+# --- utilities the user can ask us to actually run ----------------------------
+# Matched case-insensitively against the message. Order matters: longer names
+# first, so "reconstructParMesh" is not mistaken for "reconstructPar".
+RUNNABLE_UTILITIES = [
+    "surfaceFeatureExtract", "reconstructParMesh", "snappyHexMesh", "transformPoints",
+    "splitMeshRegions", "foamListTimes", "reconstructPar", "foamDictionary",
+    "potentialFoam", "renumberMesh", "decomposePar", "surfaceCheck", "createPatch",
+    "postProcess", "foamToVTK", "checkMesh", "blockMesh", "setFields", "mapFields",
+    "topoSet",
+]
+
+_RUN_VERBS = ["run ", "execute ", "launch ", "invoke ", "perform ", "do a ", "start "]
+
+
+def detect_command(message: str):
+    """
+    Return the OpenFOAM utility the user is asking us to RUN, or None.
+
+    Requires both an explicit run verb and a recognised utility name, so
+    "why did checkMesh complain?" stays a question rather than becoming an
+    instruction to execute something.
+    """
+    lower = f" {message.lower().strip()} "
+    if not any(v in lower for v in _RUN_VERBS):
+        return None
+    for util in RUNNABLE_UTILITIES:
+        if util.lower() in lower:
+            return [util]
+    return None
 
 
 # --- keyword groups (all matched case-insensitively) -------------------------
@@ -138,6 +171,21 @@ def classify_intent(message: str, has_case: bool = False, has_prior: bool = Fals
     text = f" {message.lower().strip()} "
     words = message.split()
 
+    # 0) "run checkMesh" -- an instruction to execute a utility, not a question.
+    #    This runs no diagnosis at all: we just run it and report the output.
+    command = detect_command(message)
+    if command:
+        return Intent("run_command", skills=[], needs_diagnosis=False,
+                      detail_level="brief", focus=command[0], command=command)
+
+    # 0b) Pleasantries and acknowledgements. Without this they fall through to a
+    #     full diagnosis, which is slow and expensive for a message like "thanks".
+    if len(words) <= 4 and _has(text, [" thanks", "thank you", " ok ", " okay ", " got it",
+                                       " cheers", " hi ", " hello ", " hey ", " nice",
+                                       " great", " perfect", " cool ", " yes ", " no ",
+                                       " sure ", " bye "]):
+        return Intent("chitchat", skills=[], needs_diagnosis=False, detail_level="brief")
+
     # 1) Ask for a simpler explanation of the previous answer.
     if _has(text, ["simpl", "explain that", "in plain", "eli5", "easier", "layman",
                    "dumb it down", "more clearly", "rephrase", "less technical"]):
@@ -196,9 +244,14 @@ def classify_intent(message: str, has_case: bool = False, has_prior: bool = Fals
 
     # 9) General concept question (no strong tie to "my case").
     concept = _has(text, ["what is", "what does", "what's the", "how do i", "how does",
-                          "explain ", "definition of", "meaning of", "when should i use"])
+                          "explain ", "definition of", "meaning of", "when should i use",
+                          "what are", "why does", "difference between"])
     case_ref = _has(text, ["my case", "this case", "the case", "my simulation", "my run", "my setup"])
-    if concept and not case_ref and not has_case:
+    # A concept question is answerable from knowledge alone. Previously this
+    # required no case to be loaded, so "what is a Courant number" triggered a
+    # full multi-skill diagnosis whenever a case happened to be open -- slow and
+    # pointless. What matters is whether the user asked about THEIR case.
+    if concept and not case_ref:
         return Intent("general_question", skills=[], needs_diagnosis=False, detail_level="normal",
                       focus=_focus_of(text))
 
@@ -216,8 +269,15 @@ def classify_intent(message: str, has_case: bool = False, has_prior: bool = Fals
         return Intent("why_failing", skills=select_skills(text),
                       needs_diagnosis=has_case, detail_level="normal", focus=focus)
 
-    # 12) Fallback: general question if no case; otherwise a light case look.
-    if has_case:
+    # 12) Fallback.
+    #     Only run the full internal diagnosis when the message actually shows a
+    #     diagnostic signal. Previously ANY message with a case loaded triggered a
+    #     three-skill diagnosis -- so unrelated chatter cost two API calls and a
+    #     long wait. When there is no signal we still answer, just without the
+    #     heavyweight analysis.
+    has_signal = bool(focus) or _has(text, _DIVERGENCE_KW + _MESH_KW + _BC_KW
+                                     + _NUM_KW + _TURB_KW)
+    if has_case and has_signal:
         return Intent("why_failing", skills=select_skills(text), needs_diagnosis=True,
                       detail_level="normal", focus=focus)
     return Intent("general_question", skills=[], needs_diagnosis=False, detail_level="normal",
