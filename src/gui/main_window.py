@@ -28,10 +28,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..case_compare import compare_cases
 from ..case_reader import case_inventory, read_case
+from ..case_survey import read_case_full, survey_case
 from ..config import DEFAULT_MODEL_TIER, MODELS
 from ..deterministic import run_deterministic_checks
 from ..diagnoser import propose_edits, run_full_turn
+from ..rules import run_all_checks
 from ..file_editor import FileEditor
 from ..intent import classify_intent
 from ..knowledge_base import KnowledgeBase
@@ -117,6 +120,13 @@ class MainWindow(QMainWindow):
         folder_btn = QPushButton("📁 Select Case Folder")
         folder_btn.clicked.connect(self._select_case_folder)
         tb.addWidget(folder_btn)
+        self.compare_btn = QPushButton("⇄ Compare with working case")
+        self.compare_btn.setToolTip(
+            "Compare the selected (broken) case against a case that works, and rank "
+            "the differences by how likely each is to have caused the problem."
+        )
+        self.compare_btn.clicked.connect(self._compare_with_working_case)
+        tb.addWidget(self.compare_btn)
         self.undo_btn = QPushButton("↩ Undo last change")
         self.undo_btn.setEnabled(False)
         self.undo_btn.clicked.connect(self._undo_last)
@@ -291,8 +301,12 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         try:
-            self.case_files = read_case(folder)
+            # read_case_full also picks up logs, processor folders and any
+            # dictionaries outside the curated list; it falls back to the same
+            # curated set when there is nothing extra to find.
+            self.case_files = read_case_full(folder)
             self.inventory = case_inventory(folder)
+            self.survey = survey_case(folder)
         except Exception as e:
             self._add("assistant", f"❌ Could not read that folder: {e}")
             return
@@ -344,7 +358,12 @@ class MainWindow(QMainWindow):
             return
 
         intent_d = intent.as_dict()
-        findings = run_deterministic_checks(self.case_files, "") if (intent.needs_diagnosis and self.case_files) else []
+        # run_all_checks = the original deterministic checks PLUS the cross-file
+        # rule engine, de-duplicated and ranked. RuleFinding is drop-in compatible
+        # with the older Finding, so everything downstream is unchanged.
+        findings = (run_all_checks(self.case_files, survey=getattr(self, "survey", None),
+                                   case_path=self.case_root)
+                    if (intent.needs_diagnosis and self.case_files) else [])
         do_rag = intent.needs_diagnosis or intent.name in ("general_question", "recommendation", "compare_options")
         snippets = self.kb.search(f"{intent.focus} {typed}") if do_rag else []
 
@@ -462,10 +481,75 @@ class MainWindow(QMainWindow):
             self._refresh_case_files()
         self.undo_btn.setEnabled(self.editor.can_undo())
 
+    def _compare_with_working_case(self):
+        """
+        Compare the currently-selected (broken) case against one that works.
+
+        "It worked yesterday" is the strongest debugging clue there is, so this
+        diffs the two cases semantically and ranks each difference by how likely
+        it is to have broken the run. The result is posted into the chat, where
+        it also becomes context for the next question.
+        """
+        if not self.case_root:
+            self._add("assistant",
+                      "Select the case that is **not** working first (📁 Select Case Folder), "
+                      "then use this button to point at a case that does work.")
+            return
+
+        working = QFileDialog.getExistingDirectory(
+            self, "Select a case that WORKS (the current case is treated as the broken one)"
+        )
+        if not working:
+            return
+        if Path(working).resolve() == Path(self.case_root).resolve():
+            self._add("assistant", "That is the same folder as the current case, so there is "
+                                   "nothing to compare.")
+            return
+
+        try:
+            result = compare_cases(working, self.case_root)
+        except Exception as e:
+            self._add("assistant", f"❌ Could not compare those folders: {e}")
+            return
+
+        lines = [
+            "### Case comparison",
+            f"- **Working:** `{working}`",
+            f"- **Broken:** `{self.case_root}`",
+            "",
+        ]
+        if not result.differences:
+            lines.append(
+                "I found **no meaningful differences** between the two cases. If one runs and "
+                "the other does not, the cause is probably outside these files — the mesh "
+                "itself, the environment, or the command used to launch the run."
+            )
+        else:
+            lines.append(f"Found **{len(result.differences)}** meaningful difference(s), "
+                         f"most suspicious first:")
+            lines.append("")
+            lines.append("| Risk | Setting | Working | Broken |")
+            lines.append("|---:|---|---|---|")
+            for d in result.top(12):
+                w = d.working if d.working is not None else "*(absent)*"
+                b = d.broken if d.broken is not None else "*(absent)*"
+                lines.append(f"| {d.risk} | `{d.where}` | `{w}` | `{b}` |")
+            top = result.differences[0]
+            if top.rationale:
+                lines += ["", f"**Most likely cause —** {top.where}: {top.rationale}"]
+            lines += ["", "_Ask me about any row and I'll explain it in context._"]
+
+        self._add("assistant", "\n".join(lines))
+        # Remember it, so the next question can build on the comparison.
+        self.conversations[self.convo_index]["last_comparison"] = [
+            d.as_line() for d in result.top(12)
+        ]
+
     def _refresh_case_files(self):
         if self.case_root:
             try:
-                self.case_files = read_case(self.case_root)
+                self.case_files = read_case_full(self.case_root)
+                self.survey = survey_case(self.case_root)
             except Exception:
                 pass
 
